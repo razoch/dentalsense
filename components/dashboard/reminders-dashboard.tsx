@@ -7,6 +7,7 @@ import { CLINIC_TIME_ZONE, type Appointment } from '@/lib/appointments'
 import { cn } from '@/lib/utils'
 import { AppointmentDialog, type AppointmentFormValues, type DialogState } from './appointment-dialog'
 import { AppointmentRow } from './appointment-row'
+import { ConfirmActionDialog, type ConfirmActionState } from './confirm-action-dialog'
 import { StatusSummary, matchesFilter, type StatusFilter } from './status-summary'
 
 const timeZone = CLINIC_TIME_ZONE
@@ -70,6 +71,16 @@ export function RemindersDashboard({ initialAppointments }: { initialAppointment
     setSelectedDay(dayKeyFormatter.format(new Date(values.start)))
     setFilter('all')
     setDialog(null)
+  }
+
+  const [confirmAction, setConfirmAction] = useState<ConfirmActionState>(null)
+
+  function handleConfirmAction() {
+    if (!confirmAction) return
+    const { id } = confirmAction.appointment
+    const status = confirmAction.action === 'complete' ? 'completed' : 'cancelled'
+    setAppointments((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a)))
+    setConfirmAction(null)
   }
 
   function handleResend(id: string) {
@@ -154,6 +165,8 @@ export function RemindersDashboard({ initialAppointments }: { initialAppointment
                 appointment={appointment}
                 onResend={handleResend}
                 onReschedule={(a) => setDialog({ mode: 'reschedule', appointment: a })}
+                onComplete={(a) => setConfirmAction({ action: 'complete', appointment: a })}
+                onCancel={(a) => setConfirmAction({ action: 'cancel', appointment: a })}
               />
             ))}
           </ul>
@@ -172,6 +185,12 @@ export function RemindersDashboard({ initialAppointments }: { initialAppointment
         appointments={appointments}
         onOpenChange={(open) => !open && setDialog(null)}
         onSubmit={handleDialogSubmit}
+      />
+
+      <ConfirmActionDialog
+        state={confirmAction}
+        onOpenChange={(open) => !open && setConfirmAction(null)}
+        onConfirm={handleConfirmAction}
       />
     </div>
   )

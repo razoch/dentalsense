@@ -1,4 +1,4 @@
-export type ReminderStatus = 'pending' | 'sending' | 'sent' | 'confirmed' | 'cancelled'
+export type ReminderStatus = 'pending' | 'sending' | 'sent' | 'confirmed' | 'cancelled' | 'completed'
 
 export type Appointment = {
   id: string

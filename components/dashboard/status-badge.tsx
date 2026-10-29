@@ -1,4 +1,4 @@
-import { CalendarX2, CheckCircle2, Clock, Loader2, Send } from 'lucide-react'
+import { CalendarX2, CheckCircle2, CircleCheckBig, Clock, Loader2, Send } from 'lucide-react'
 import type { ReminderStatus } from '@/lib/appointments'
 import { cn } from '@/lib/utils'
 
@@ -35,6 +35,12 @@ export const statusConfig: Record<
     icon: CalendarX2,
     className: 'bg-danger-soft text-danger ring-danger/25',
     dotClassName: 'bg-danger',
+  },
+  completed: {
+    label: 'Finalizada',
+    icon: CircleCheckBig,
+    className: 'bg-muted text-muted-foreground ring-border',
+    dotClassName: 'bg-muted-foreground/40',
   },
 }
 

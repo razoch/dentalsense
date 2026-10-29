@@ -1,4 +1,4 @@
-import { CalendarClock, RotateCw, Stethoscope } from 'lucide-react'
+import { CalendarClock, CircleCheckBig, RotateCw, Stethoscope, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CLINIC_TIME_ZONE, type Appointment } from '@/lib/appointments'
 import { cn } from '@/lib/utils'
@@ -23,13 +23,19 @@ export function AppointmentRow({
   appointment,
   onResend,
   onReschedule,
+  onComplete,
+  onCancel,
 }: {
   appointment: Appointment
   onResend: (id: string) => void
   onReschedule: (appointment: Appointment) => void
+  onComplete: (appointment: Appointment) => void
+  onCancel: (appointment: Appointment) => void
 }) {
   const { patientName, phone, treatment, start, status, lastMessageAt } = appointment
   const isSending = status === 'sending'
+  const isCompleted = status === 'completed'
+  const isClosed = isCompleted || status === 'cancelled'
   const canResend = status === 'sent' || status === 'pending'
 
   return (
@@ -37,6 +43,7 @@ export function AppointmentRow({
       className={cn(
         'relative flex flex-col gap-4 rounded-xl border bg-card p-4 shadow-xs sm:flex-row sm:items-center sm:gap-6',
         status === 'cancelled' && 'bg-danger-soft/40',
+        isCompleted && 'opacity-70',
       )}
     >
       <span
@@ -66,13 +73,15 @@ export function AppointmentRow({
       <div className="flex flex-col gap-1 sm:w-52 sm:items-start">
         <StatusBadge status={status} />
         <span className="text-xs text-muted-foreground">
-          {lastMessageAt
-            ? `Último mensaje: ${timeFormatter.format(new Date(lastMessageAt))} hrs`
-            : 'Se enviará automáticamente'}
+          {isCompleted
+            ? 'Paciente atendido'
+            : lastMessageAt
+              ? `Último mensaje: ${timeFormatter.format(new Date(lastMessageAt))} hrs`
+              : 'Se enviará automáticamente'}
         </span>
       </div>
 
-      <div className="flex flex-col gap-2 sm:w-48 sm:shrink-0">
+      <div className="flex flex-col gap-2 sm:w-56 sm:shrink-0">
         <Button
           variant={canResend ? 'default' : 'outline'}
           className="w-full"
@@ -86,13 +95,37 @@ export function AppointmentRow({
         <Button
           variant={status === 'cancelled' ? 'default' : 'outline'}
           className="w-full"
-          disabled={isSending}
+          disabled={isSending || isCompleted}
           onClick={() => onReschedule(appointment)}
           aria-label={`Reagendar cita de ${patientName}`}
         >
           <CalendarClock className="size-4" aria-hidden="true" />
           Reagendar
         </Button>
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-success/40 text-success hover:bg-success-soft hover:text-success"
+            disabled={isSending || isClosed}
+            onClick={() => onComplete(appointment)}
+            aria-label={`Finalizar cita de ${patientName}`}
+          >
+            <CircleCheckBig className="size-4" aria-hidden="true" />
+            Finalizar
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-danger/40 text-danger hover:bg-danger-soft hover:text-danger"
+            disabled={isSending || isClosed}
+            onClick={() => onCancel(appointment)}
+            aria-label={`Cancelar cita de ${patientName}`}
+          >
+            <XCircle className="size-4" aria-hidden="true" />
+            Cancelar
+          </Button>
+        </div>
       </div>
     </li>
   )
