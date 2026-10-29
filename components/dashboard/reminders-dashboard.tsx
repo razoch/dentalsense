@@ -1,9 +1,11 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { CalendarDays, CalendarCheck } from 'lucide-react'
+import { CalendarDays, CalendarCheck, CalendarPlus } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { CLINIC_TIME_ZONE, type Appointment } from '@/lib/appointments'
 import { cn } from '@/lib/utils'
+import { AppointmentDialog, type AppointmentFormValues, type DialogState } from './appointment-dialog'
 import { AppointmentRow } from './appointment-row'
 import { StatusSummary, matchesFilter, type StatusFilter } from './status-summary'
 
@@ -47,6 +49,29 @@ export function RemindersDashboard({ initialAppointments }: { initialAppointment
 
   const selectedDate = days.find((d) => d.key === selectedDay)?.date
 
+  const [dialog, setDialog] = useState<DialogState>(null)
+
+  function handleDialogSubmit(values: AppointmentFormValues) {
+    if (dialog?.mode === 'reschedule') {
+      const id = dialog.appointment.id
+      setAppointments((prev) =>
+        prev.map((a) =>
+          a.id === id
+            ? { ...a, treatment: values.treatment, start: values.start, status: 'pending', lastMessageAt: undefined }
+            : a,
+        ),
+      )
+    } else {
+      setAppointments((prev) => [
+        ...prev,
+        { id: `evt-${crypto.randomUUID()}`, ...values, status: 'pending' },
+      ])
+    }
+    setSelectedDay(dayKeyFormatter.format(new Date(values.start)))
+    setFilter('all')
+    setDialog(null)
+  }
+
   function handleResend(id: string) {
     setAppointments((prev) => prev.map((a) => (a.id === id ? { ...a, status: 'sending' } : a)))
     setTimeout(() => {
@@ -74,15 +99,21 @@ export function RemindersDashboard({ initialAppointments }: { initialAppointment
               </p>
             )}
           </div>
-          {filter !== 'all' && (
-            <button
-              type="button"
-              onClick={() => setFilter('all')}
-              className="self-start text-sm font-medium text-primary hover:underline sm:self-auto"
-            >
-              Ver todas las citas
-            </button>
-          )}
+          <div className="flex items-center gap-4 self-start sm:self-auto">
+            {filter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setFilter('all')}
+                className="text-sm font-medium text-primary hover:underline"
+              >
+                Ver todas las citas
+              </button>
+            )}
+            <Button onClick={() => setDialog({ mode: 'create' })}>
+              <CalendarPlus className="size-4" aria-hidden="true" />
+              Nueva cita
+            </Button>
+          </div>
         </div>
 
         <div role="tablist" aria-label="Seleccionar día" className="grid grid-cols-5 gap-2">
@@ -118,7 +149,12 @@ export function RemindersDashboard({ initialAppointments }: { initialAppointment
         {dayAppointments.length > 0 ? (
           <ul className="flex flex-col gap-3" role="tabpanel">
             {dayAppointments.map((appointment) => (
-              <AppointmentRow key={appointment.id} appointment={appointment} onResend={handleResend} />
+              <AppointmentRow
+                key={appointment.id}
+                appointment={appointment}
+                onResend={handleResend}
+                onReschedule={(a) => setDialog({ mode: 'reschedule', appointment: a })}
+              />
             ))}
           </ul>
         ) : (
@@ -129,6 +165,14 @@ export function RemindersDashboard({ initialAppointments }: { initialAppointment
           </div>
         )}
       </section>
+
+      <AppointmentDialog
+        state={dialog}
+        days={days}
+        appointments={appointments}
+        onOpenChange={(open) => !open && setDialog(null)}
+        onSubmit={handleDialogSubmit}
+      />
     </div>
   )
 }

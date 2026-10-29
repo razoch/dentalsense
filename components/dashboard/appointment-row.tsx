@@ -1,4 +1,4 @@
-import { RotateCw, Stethoscope } from 'lucide-react'
+import { CalendarClock, RotateCw, Stethoscope } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CLINIC_TIME_ZONE, type Appointment } from '@/lib/appointments'
 import { cn } from '@/lib/utils'
@@ -22,9 +22,11 @@ function WhatsAppIcon({ className }: { className?: string }) {
 export function AppointmentRow({
   appointment,
   onResend,
+  onReschedule,
 }: {
   appointment: Appointment
   onResend: (id: string) => void
+  onReschedule: (appointment: Appointment) => void
 }) {
   const { patientName, phone, treatment, start, status, lastMessageAt } = appointment
   const isSending = status === 'sending'
@@ -70,7 +72,7 @@ export function AppointmentRow({
         </span>
       </div>
 
-      <div className="sm:w-48 sm:shrink-0">
+      <div className="flex flex-col gap-2 sm:w-48 sm:shrink-0">
         <Button
           variant={canResend ? 'default' : 'outline'}
           className="w-full"
@@ -80,6 +82,16 @@ export function AppointmentRow({
         >
           <RotateCw className={cn('size-4', isSending && 'animate-spin')} aria-hidden="true" />
           {isSending ? 'Enviando…' : 'Reenviar recordatorio'}
+        </Button>
+        <Button
+          variant={status === 'cancelled' ? 'default' : 'outline'}
+          className="w-full"
+          disabled={isSending}
+          onClick={() => onReschedule(appointment)}
+          aria-label={`Reagendar cita de ${patientName}`}
+        >
+          <CalendarClock className="size-4" aria-hidden="true" />
+          Reagendar
         </Button>
       </div>
     </li>

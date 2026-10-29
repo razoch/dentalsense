@@ -40,6 +40,36 @@ const seeds: CalendarEventSeed[] = [
 export const CLINIC_TIME_ZONE = 'America/Mexico_City'
 const CLINIC_UTC_OFFSET = '-06:00'
 
+export const TREATMENTS = [
+  'Limpieza dental',
+  'Valoración inicial',
+  'Revisión general',
+  'Resina estética',
+  'Endodoncia',
+  'Extracción',
+  'Blanqueamiento',
+  'Ajuste de brackets',
+  'Colocación de corona',
+  'Implante (control)',
+]
+
+export function toClinicISO(dayKey: string, time: string) {
+  return new Date(`${dayKey}T${time}:00${CLINIC_UTC_OFFSET}`).toISOString()
+}
+
+const dayKeyFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: CLINIC_TIME_ZONE })
+const timeKeyFormatter = new Intl.DateTimeFormat('en-GB', {
+  timeZone: CLINIC_TIME_ZONE,
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
+
+export function toClinicParts(iso: string) {
+  const date = new Date(iso)
+  return { dayKey: dayKeyFormatter.format(date), time: timeKeyFormatter.format(date) }
+}
+
 export function getUpcomingAppointments(now = new Date()): Appointment[] {
   const todayInClinic = new Intl.DateTimeFormat('en-CA', { timeZone: CLINIC_TIME_ZONE }).format(now)
   const [y, m, d] = todayInClinic.split('-').map(Number)
