@@ -19,11 +19,16 @@ export default async function Page() {
     )
   }
 
-  const { staff, user, dayKeys, appointments, treatments, riskPatients } = await getDashboardData()
+  const { staff, user, dayKeys, appointments, treatments, riskPatients, calendarConnected } =
+    await getDashboardData()
 
   return (
     <div className="min-h-dvh">
-      <DashboardHeader userName={staff?.full_name ?? user.email ?? ''} />
+      <DashboardHeader
+        userName={staff?.full_name ?? user.email ?? ''}
+        calendarConnected={calendarConnected}
+        showCalendar={Boolean(staff?.is_active)}
+      />
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         {staff?.is_active ? (
           <RemindersDashboard

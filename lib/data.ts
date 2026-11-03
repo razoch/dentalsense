@@ -8,6 +8,7 @@ import {
   type RiskPatient,
   type Treatment,
 } from '@/lib/appointments'
+import { isCalendarConnected } from '@/lib/google-calendar'
 import { createClient } from '@/lib/supabase/server'
 
 export async function getCurrentStaff() {
@@ -31,7 +32,15 @@ export async function getDashboardData() {
   const dayKeys = getUpcomingDayKeys()
 
   if (!staff?.is_active) {
-    return { user, staff, dayKeys, appointments: [], treatments: [], riskPatients: [] as RiskPatient[] }
+    return {
+      user,
+      staff,
+      dayKeys,
+      appointments: [],
+      treatments: [],
+      riskPatients: [] as RiskPatient[],
+      calendarConnected: false,
+    }
   }
 
   const rangeStart = toClinicISO(dayKeys[0], '00:00')
@@ -39,7 +48,7 @@ export async function getDashboardData() {
   lastDay.setUTCDate(lastDay.getUTCDate() + 1)
   const rangeEnd = toClinicISO(lastDay.toISOString().slice(0, 10), '00:00')
 
-  const [appointmentsResult, treatmentsResult, riskResult] = await Promise.all([
+  const [appointmentsResult, treatmentsResult, riskResult, calendarConnected] = await Promise.all([
     supabase
       .from('dashboard_appointments')
       .select('id, patient_name, phone, treatment_id, treatment, starts_at, status, last_message_at')
@@ -53,6 +62,7 @@ export async function getDashboardData() {
         'appointment_id, patient_id, patient_name, phone, treatment, followup_category, last_session_at, days_inactive, last_reactivation_at, reactivation_count',
       )
       .order('days_inactive', { ascending: false }),
+    isCalendarConnected(user.id),
   ])
 
   if (appointmentsResult.error) throw new Error(appointmentsResult.error.message)
@@ -79,5 +89,5 @@ export async function getDashboardData() {
     durationMinutes: t.duration_minutes,
   }))
 
-  return { user, staff, dayKeys, appointments, treatments, riskPatients }
+  return { user, staff, dayKeys, appointments, treatments, riskPatients, calendarConnected }
 }

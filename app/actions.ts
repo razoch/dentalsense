@@ -2,7 +2,22 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { REACTIVATION_COOLDOWN_HOURS, buildReactivationMessage, normalizePhone } from '@/lib/appointments'
+import {
+  REACTIVATION_COOLDOWN_HOURS,
+  buildReactivationMessage,
+  getUpcomingDayKeys,
+  normalizePhone,
+  toClinicISO,
+} from '@/lib/appointments'
+import {
+  deleteEvent,
+  getCalendarAuthorizationUrl,
+  getCalendarToken,
+  insertEvent,
+  listEvents,
+  patchEvent,
+  type GoogleCalendarEvent,
+} from '@/lib/google-calendar'
 import { createClient } from '@/lib/supabase/server'
 
 export type ActionResult = { ok: true } | { ok: false; error: string }
@@ -18,6 +33,47 @@ async function requireStaff() {
   if (!user) return null
   const { data: staff } = await supabase.from('staff').select('id, is_active').eq('id', user.id).maybeSingle()
   return staff?.is_active ? { supabase, userId: user.id } : null
+}
+
+type StaffContext = NonNullable<Awaited<ReturnType<typeof requireStaff>>>
+
+async function pushToCalendar(ctx: StaffContext, appointmentId: string, operation: 'upsert' | 'delete') {
+  try {
+    const token = await getCalendarToken(ctx.userId)
+    if (!token) return
+
+    const { data } = await ctx.supabase
+      .from('appointments')
+      .select('id, google_event_id, starts_at, ends_at, patients(full_name, phone), treatments(name)')
+      .eq('id', appointmentId)
+      .maybeSingle()
+    if (!data) return
+
+    if (operation === 'delete') {
+      if (data.google_event_id) await deleteEvent(token, data.google_event_id)
+      return
+    }
+
+    const patient = data.patients as unknown as { full_name: string; phone: string }
+    const treatment = data.treatments as unknown as { name: string }
+    const input = {
+      appointmentId: data.id,
+      patientName: patient.full_name,
+      phone: patient.phone,
+      treatment: treatment.name,
+      startsAt: data.starts_at,
+      endsAt: data.ends_at,
+    }
+
+    if (data.google_event_id) {
+      await patchEvent(token, data.google_event_id, input)
+    } else {
+      const eventId = await insertEvent(token, input)
+      if (eventId) await ctx.supabase.from('appointments').update({ google_event_id: eventId }).eq('id', data.id)
+    }
+  } catch (error) {
+    console.error('[actions] Google Calendar push failed:', error instanceof Error ? error.message : error)
+  }
 }
 
 function dbError(error: { code?: string; message: string }): ActionResult {
@@ -71,15 +127,20 @@ export async function createAppointment(input: {
     .single()
   if (patientError) return dbError(patientError)
 
-  const { error } = await ctx.supabase.from('appointments').insert({
-    patient_id: patient.id,
-    treatment_id: input.treatmentId,
-    starts_at: start.toISOString(),
-    ends_at: new Date(start.getTime() + duration * 60_000).toISOString(),
-    created_by: ctx.userId,
-  })
+  const { data: created, error } = await ctx.supabase
+    .from('appointments')
+    .insert({
+      patient_id: patient.id,
+      treatment_id: input.treatmentId,
+      starts_at: start.toISOString(),
+      ends_at: new Date(start.getTime() + duration * 60_000).toISOString(),
+      created_by: ctx.userId,
+    })
+    .select('id')
+    .single()
   if (error) return dbError(error)
 
+  await pushToCalendar(ctx, created.id, 'upsert')
   revalidatePath('/')
   return { ok: true }
 }
@@ -118,6 +179,7 @@ export async function rescheduleAppointment(input: {
   if (error) return dbError(error)
   if (!data.length) return { ok: false, error: 'La cita ya no se puede reagendar.' }
 
+  await pushToCalendar(ctx, input.id, 'upsert')
   revalidatePath('/')
   return { ok: true }
 }
@@ -136,6 +198,7 @@ export async function closeAppointment(id: string, status: 'completed' | 'cancel
   if (error) return dbError(error)
   if (!data.length) return { ok: false, error: 'La cita ya estaba cerrada.' }
 
+  if (status === 'cancelled') await pushToCalendar(ctx, id, 'delete')
   revalidatePath('/')
   return { ok: true }
 }
@@ -227,6 +290,142 @@ export async function sendReactivationSequence(
 
   revalidatePath('/')
   return { ok: true, message }
+}
+
+export async function connectGoogleCalendar(): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  const ctx = await requireStaff()
+  if (!ctx) return { ok: false, error: 'Tu sesión no tiene permisos.' }
+  try {
+    return { ok: true, url: await getCalendarAuthorizationUrl(ctx.userId) }
+  } catch (error) {
+    console.error('[actions] Google authorization failed:', error instanceof Error ? error.message : error)
+    return { ok: false, error: 'No se pudo iniciar la conexión con Google. Intenta de nuevo.' }
+  }
+}
+
+export type CalendarSyncResult =
+  | { ok: true; imported: number; updated: number; cancelled: number; skipped: number }
+  | { ok: false; error: string; needsAuthorization?: boolean }
+
+const PHONE_IN_TEXT_RE = /\+?\d[\d\s().-]{8,}\d/
+
+function findPhone(event: GoogleCalendarEvent) {
+  const match = `${event.description ?? ''}\n${event.summary ?? ''}`.match(PHONE_IN_TEXT_RE)
+  if (!match) return null
+  const phone = normalizePhone(match[0])
+  return PHONE_RE.test(phone) ? phone : null
+}
+
+function findPatientName(event: GoogleCalendarEvent, treatmentName: string | null) {
+  const fromDescription = event.description?.match(/Paciente:\s*(.+)/i)?.[1]?.trim()
+  if (fromDescription) return fromDescription
+  let name = (event.summary ?? '').replace(PHONE_IN_TEXT_RE, '')
+  if (treatmentName) name = name.replace(new RegExp(treatmentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), '')
+  return name.replace(/[-–|:,]+/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+export async function syncGoogleCalendar(): Promise<CalendarSyncResult> {
+  const ctx = await requireStaff()
+  if (!ctx) return { ok: false, error: 'Tu sesión no tiene permisos.' }
+
+  let token: string | null
+  try {
+    token = await getCalendarToken(ctx.userId)
+  } catch (error) {
+    console.error('[actions] Google token failed:', error instanceof Error ? error.message : error)
+    return { ok: false, error: 'No se pudo contactar a Google Calendar.' }
+  }
+  if (!token) return { ok: false, error: 'Conecta tu cuenta de Google primero.', needsAuthorization: true }
+
+  const dayKeys = getUpcomingDayKeys()
+  const lastDay = new Date(`${dayKeys[dayKeys.length - 1]}T00:00:00Z`)
+  lastDay.setUTCDate(lastDay.getUTCDate() + 1)
+
+  let events: GoogleCalendarEvent[]
+  try {
+    events = await listEvents(token, toClinicISO(dayKeys[0], '00:00'), toClinicISO(lastDay.toISOString().slice(0, 10), '00:00'))
+  } catch (error) {
+    console.error('[actions] Google list failed:', error instanceof Error ? error.message : error)
+    return { ok: false, error: 'No se pudieron leer los eventos de Google Calendar.' }
+  }
+
+  const timedEvents = events.filter((e) => e.start?.dateTime && e.end?.dateTime)
+  const [{ data: treatments }, { data: existing }] = await Promise.all([
+    ctx.supabase.from('treatments').select('id, name').eq('is_active', true),
+    ctx.supabase
+      .from('appointments')
+      .select('id, google_event_id, starts_at, ends_at, status')
+      .in('google_event_id', timedEvents.length ? timedEvents.map((e) => e.id) : ['-']),
+  ])
+  const byEventId = new Map((existing ?? []).map((a) => [a.google_event_id as string, a]))
+  const fallbackTreatment =
+    treatments?.find((t) => t.name.toLowerCase() === 'revisión general') ?? treatments?.[0] ?? null
+
+  const result = { imported: 0, updated: 0, cancelled: 0, skipped: 0 }
+
+  for (const event of timedEvents) {
+    const current = byEventId.get(event.id)
+    const closed = current?.status === 'completed' || current?.status === 'cancelled'
+
+    if (event.status === 'cancelled') {
+      if (current && !closed) {
+        const { error } = await ctx.supabase.from('appointments').update({ status: 'cancelled' }).eq('id', current.id)
+        if (!error) result.cancelled++
+      }
+      continue
+    }
+
+    const startsAt = new Date(event.start!.dateTime!).toISOString()
+    const endsAt = new Date(event.end!.dateTime!).toISOString()
+
+    if (current) {
+      const moved =
+        new Date(current.starts_at).getTime() !== new Date(startsAt).getTime() ||
+        new Date(current.ends_at).getTime() !== new Date(endsAt).getTime()
+      if (moved && !closed) {
+        const { error } = await ctx.supabase
+          .from('appointments')
+          .update({ starts_at: startsAt, ends_at: endsAt, status: 'pending', last_message_at: null, reminder_attempts: 0 })
+          .eq('id', current.id)
+        if (error) result.skipped++
+        else result.updated++
+      }
+      continue
+    }
+
+    const text = `${event.summary ?? ''} ${event.description ?? ''}`.toLowerCase()
+    const treatment = treatments?.find((t) => text.includes(t.name.toLowerCase())) ?? fallbackTreatment
+    const phone = findPhone(event)
+    const patientName = findPatientName(event, treatment?.name ?? null)
+    if (!treatment || !phone || patientName.length < 2) {
+      result.skipped++
+      continue
+    }
+
+    const { data: patient, error: patientError } = await ctx.supabase
+      .from('patients')
+      .upsert({ full_name: patientName.slice(0, 120), phone }, { onConflict: 'phone' })
+      .select('id')
+      .single()
+    if (patientError) {
+      result.skipped++
+      continue
+    }
+
+    const { error } = await ctx.supabase.from('appointments').insert({
+      patient_id: patient.id,
+      treatment_id: treatment.id,
+      starts_at: startsAt,
+      ends_at: endsAt,
+      google_event_id: event.id,
+      created_by: ctx.userId,
+    })
+    if (error) result.skipped++
+    else result.imported++
+  }
+
+  revalidatePath('/')
+  return { ok: true, ...result }
 }
 
 export async function signOut() {
