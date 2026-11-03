@@ -39,10 +39,14 @@ export function ConfirmActionDialog({
   state,
   onOpenChange,
   onConfirm,
+  isPending = false,
+  error,
 }: {
   state: ConfirmActionState
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
+  isPending?: boolean
+  error?: string | null
 }) {
   const config = state ? copy[state.action] : copy.cancel
   const Icon = config.icon
@@ -63,12 +67,17 @@ export function ConfirmActionDialog({
             <p className="text-muted-foreground">{state.appointment.treatment}</p>
           </div>
         )}
+        {error && (
+          <p role="alert" className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
+            {error}
+          </p>
+        )}
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
             Volver
           </Button>
-          <Button className={config.buttonClassName} onClick={onConfirm}>
-            {config.confirm}
+          <Button className={config.buttonClassName} onClick={onConfirm} disabled={isPending}>
+            {isPending ? 'Guardando…' : config.confirm}
           </Button>
         </DialogFooter>
       </DialogContent>

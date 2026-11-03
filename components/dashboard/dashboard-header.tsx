@@ -1,6 +1,8 @@
-import { CalendarSync } from 'lucide-react'
+import { CalendarSync, LogOut } from 'lucide-react'
+import { signOut } from '@/app/actions'
+import { Button } from '@/components/ui/button'
 
-export function DashboardHeader() {
+export function DashboardHeader({ userName }: { userName: string }) {
   return (
     <header className="border-b bg-card">
       <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
@@ -13,13 +15,18 @@ export function DashboardHeader() {
             <h1 className="text-xl font-semibold text-balance">Recordatorios y confirmaciones</h1>
           </div>
         </div>
-        <div className="flex items-center gap-2 self-start rounded-full bg-success-soft px-3 py-1.5 text-sm font-medium text-success sm:self-auto">
-          <span className="relative flex size-2">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-60" />
-            <span className="relative inline-flex size-2 rounded-full bg-success" />
-          </span>
-          <CalendarSync className="size-4" aria-hidden="true" />
-          Sincronizado con Google Calendar
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 rounded-full bg-muted px-3 py-1.5 text-sm font-medium text-muted-foreground">
+            <CalendarSync className="size-4" aria-hidden="true" />
+            Google Calendar: pendiente de conectar
+          </div>
+          <form action={signOut} className="flex items-center gap-2">
+            <span className="hidden text-sm text-muted-foreground md:inline">{userName}</span>
+            <Button type="submit" variant="outline" size="sm">
+              <LogOut className="size-4" aria-hidden="true" />
+              Salir
+            </Button>
+          </form>
         </div>
       </div>
     </header>

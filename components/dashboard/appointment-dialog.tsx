@@ -16,10 +16,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   CLINIC_TIME_ZONE,
-  TREATMENTS,
   toClinicISO,
   toClinicParts,
   type Appointment,
+  type Treatment,
 } from '@/lib/appointments'
 import { cn } from '@/lib/utils'
 
@@ -28,9 +28,11 @@ export type DialogState = { mode: 'create' } | { mode: 'reschedule'; appointment
 export type AppointmentFormValues = {
   patientName: string
   phone: string
-  treatment: string
+  treatmentId: string
   start: string
 }
+
+type SubmitHandler = (values: AppointmentFormValues) => Promise<string | null>
 
 const dayLabelFormatter = new Intl.DateTimeFormat('es-MX', {
   timeZone: CLINIC_TIME_ZONE,
@@ -45,15 +47,17 @@ const fieldClassName =
 export function AppointmentDialog({
   state,
   days,
+  treatments,
   appointments,
   onOpenChange,
   onSubmit,
 }: {
   state: DialogState
   days: { key: string; date: Date }[]
+  treatments: Treatment[]
   appointments: Appointment[]
   onOpenChange: (open: boolean) => void
-  onSubmit: (values: AppointmentFormValues) => void
+  onSubmit: SubmitHandler
 }) {
   const formKey = state?.mode === 'reschedule' ? state.appointment.id : state?.mode ?? 'closed'
 
@@ -65,6 +69,7 @@ export function AppointmentDialog({
             key={formKey}
             state={state}
             days={days}
+            treatments={treatments}
             appointments={appointments}
             onSubmit={onSubmit}
           />
@@ -77,48 +82,55 @@ export function AppointmentDialog({
 function AppointmentForm({
   state,
   days,
+  treatments,
   appointments,
   onSubmit,
 }: {
   state: NonNullable<DialogState>
   days: { key: string; date: Date }[]
+  treatments: Treatment[]
   appointments: Appointment[]
-  onSubmit: (values: AppointmentFormValues) => void
+  onSubmit: SubmitHandler
 }) {
   const isReschedule = state.mode === 'reschedule'
   const current = isReschedule ? state.appointment : null
   const initial = current ? toClinicParts(current.start) : { dayKey: days[0]?.key ?? '', time: '09:00' }
   const [error, setError] = useState<string | null>(null)
+  const [isPending, setIsPending] = useState(false)
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const data = new FormData(event.currentTarget)
     const patientName = current?.patientName ?? String(data.get('patientName')).trim()
     const phone = current?.phone ?? String(data.get('phone')).trim()
-    const treatment = String(data.get('treatment')).trim()
+    const treatmentId = String(data.get('treatmentId') ?? '')
     const dayKey = String(data.get('day'))
     const time = String(data.get('time'))
 
-    if (!patientName || !phone || !treatment || !dayKey || !time) {
+    if (!patientName || !phone || !treatmentId || !dayKey || !time) {
       setError('Completa todos los campos.')
       return
     }
 
     const start = toClinicISO(dayKey, time)
-    if (current && start === current.start) {
+    if (current && start === current.start && treatmentId === current.treatmentId && current.status !== 'cancelled') {
       setError('Selecciona un horario distinto al actual.')
       return
     }
 
     const conflict = appointments.find(
-      (a) => a.id !== current?.id && a.status !== 'cancelled' && a.start === start,
+      (a) => a.id !== current?.id && a.status !== 'cancelled' && a.status !== 'completed' && a.start === start,
     )
     if (conflict) {
       setError(`Ese horario ya está ocupado por ${conflict.patientName}.`)
       return
     }
 
-    onSubmit({ patientName, phone, treatment, start })
+    setError(null)
+    setIsPending(true)
+    const submitError = await onSubmit({ patientName, phone, treatmentId, start })
+    setIsPending(false)
+    if (submitError) setError(submitError)
   }
 
   const Icon = isReschedule ? CalendarClock : CalendarPlus
@@ -167,20 +179,23 @@ function AppointmentForm({
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5 sm:col-span-2">
-          <Label htmlFor="treatment">Tratamiento</Label>
-          <Input
-            id="treatment"
-            name="treatment"
-            list="treatment-options"
+          <Label htmlFor="treatmentId">Tratamiento</Label>
+          <select
+            id="treatmentId"
+            name="treatmentId"
             required
-            defaultValue={current?.treatment}
-            placeholder="Selecciona o escribe"
-          />
-          <datalist id="treatment-options">
-            {TREATMENTS.map((t) => (
-              <option key={t} value={t} />
+            defaultValue={current?.treatmentId ?? ''}
+            className={fieldClassName}
+          >
+            <option value="" disabled className="bg-popover">
+              Selecciona un tratamiento
+            </option>
+            {treatments.map((t) => (
+              <option key={t.id} value={t.id} className="bg-popover">
+                {t.name} · {t.durationMinutes} min
+              </option>
             ))}
-          </datalist>
+          </select>
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="day">Día</Label>
@@ -206,8 +221,10 @@ function AppointmentForm({
       )}
 
       <DialogFooter>
-        <DialogClose render={<Button type="button" variant="outline" />}>Cancelar</DialogClose>
-        <Button type="submit">{isReschedule ? 'Confirmar nuevo horario' : 'Agendar cita'}</Button>
+        <DialogClose render={<Button type="button" variant="outline" disabled={isPending} />}>Cancelar</DialogClose>
+        <Button type="submit" disabled={isPending}>
+          {isPending ? 'Guardando…' : isReschedule ? 'Confirmar nuevo horario' : 'Agendar cita'}
+        </Button>
       </DialogFooter>
     </form>
   )
