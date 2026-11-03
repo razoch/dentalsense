@@ -19,14 +19,19 @@ export default async function Page() {
     )
   }
 
-  const { staff, user, dayKeys, appointments, treatments } = await getDashboardData()
+  const { staff, user, dayKeys, appointments, treatments, riskPatients } = await getDashboardData()
 
   return (
     <div className="min-h-dvh">
       <DashboardHeader userName={staff?.full_name ?? user.email ?? ''} />
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         {staff?.is_active ? (
-          <RemindersDashboard appointments={appointments} treatments={treatments} dayKeys={dayKeys} />
+          <RemindersDashboard
+            appointments={appointments}
+            treatments={treatments}
+            dayKeys={dayKeys}
+            riskPatients={riskPatients}
+          />
         ) : (
           <div className="mx-auto flex max-w-md flex-col items-center gap-3 rounded-2xl border bg-card p-8 text-center">
             <ShieldAlert className="size-8 text-primary" aria-hidden="true" />

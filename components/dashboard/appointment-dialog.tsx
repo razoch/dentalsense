@@ -23,7 +23,10 @@ import {
 } from '@/lib/appointments'
 import { cn } from '@/lib/utils'
 
-export type DialogState = { mode: 'create' } | { mode: 'reschedule'; appointment: Appointment } | null
+export type DialogState =
+  | { mode: 'create'; prefill?: { patientName: string; phone: string; treatmentId?: string } }
+  | { mode: 'reschedule'; appointment: Appointment }
+  | null
 
 export type AppointmentFormValues = {
   patientName: string
@@ -59,7 +62,12 @@ export function AppointmentDialog({
   onOpenChange: (open: boolean) => void
   onSubmit: SubmitHandler
 }) {
-  const formKey = state?.mode === 'reschedule' ? state.appointment.id : state?.mode ?? 'closed'
+  const formKey =
+    state?.mode === 'reschedule'
+      ? state.appointment.id
+      : state?.mode === 'create'
+        ? `create-${state.prefill?.phone ?? ''}`
+        : 'closed'
 
   return (
     <Dialog open={state !== null} onOpenChange={onOpenChange}>
@@ -94,6 +102,7 @@ function AppointmentForm({
 }) {
   const isReschedule = state.mode === 'reschedule'
   const current = isReschedule ? state.appointment : null
+  const prefill = state.mode === 'create' ? state.prefill : undefined
   const initial = current ? toClinicParts(current.start) : { dayKey: days[0]?.key ?? '', time: '09:00' }
   const [error, setError] = useState<string | null>(null)
   const [isPending, setIsPending] = useState(false)
@@ -168,11 +177,25 @@ function AppointmentForm({
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="flex flex-col gap-1.5 sm:col-span-2">
             <Label htmlFor="patientName">Nombre del paciente</Label>
-            <Input id="patientName" name="patientName" required autoComplete="off" placeholder="Ej. Laura Pérez" />
+            <Input
+              id="patientName"
+              name="patientName"
+              required
+              autoComplete="off"
+              placeholder="Ej. Laura Pérez"
+              defaultValue={prefill?.patientName}
+            />
           </div>
           <div className="flex flex-col gap-1.5 sm:col-span-2">
             <Label htmlFor="phone">WhatsApp</Label>
-            <Input id="phone" name="phone" type="tel" required placeholder="+52 55 1234 5678" />
+            <Input
+              id="phone"
+              name="phone"
+              type="tel"
+              required
+              placeholder="+52 55 1234 5678"
+              defaultValue={prefill?.phone}
+            />
           </div>
         </div>
       )}
@@ -184,7 +207,7 @@ function AppointmentForm({
             id="treatmentId"
             name="treatmentId"
             required
-            defaultValue={current?.treatmentId ?? ''}
+            defaultValue={current?.treatmentId ?? prefill?.treatmentId ?? ''}
             className={fieldClassName}
           >
             <option value="" disabled className="bg-popover">

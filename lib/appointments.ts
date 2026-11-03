@@ -13,6 +13,27 @@ export type Appointment = {
 
 export type Treatment = { id: string; name: string; durationMinutes: number }
 
+export type RiskPatient = {
+  appointmentId: string
+  patientId: string
+  patientName: string
+  phone: string
+  treatment: string
+  category: 'multisesion_endodoncia' | 'multisesion_ortodoncia'
+  lastSessionAt: string
+  daysInactive: number
+  lastReactivationAt: string | null
+  reactivationCount: number
+}
+
+export const REACTIVATION_HIGH_RISK_DAYS = 30
+export const REACTIVATION_COOLDOWN_HOURS = 24
+
+export function buildReactivationMessage(patientName: string, treatment: string, daysInactive: number) {
+  const firstName = patientName.trim().split(/\s+/)[0]
+  return `Hola ${firstName}, te saluda el consultorio de la Dra. Laura. Notamos que han pasado ${daysInactive} días desde tu última sesión de ${treatment.toLowerCase()}. Aunque ya no sientas molestias, es importante concluir el tratamiento para evitar complicaciones. ¿Te gustaría que te agendemos tu siguiente cita esta semana? Responde SÍ y te compartimos horarios.`
+}
+
 export type DashboardAppointmentRow = {
   id: string
   patient_name: string

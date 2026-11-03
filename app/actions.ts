@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { normalizePhone } from '@/lib/appointments'
+import { REACTIVATION_COOLDOWN_HOURS, buildReactivationMessage, normalizePhone } from '@/lib/appointments'
 import { createClient } from '@/lib/supabase/server'
 
 export type ActionResult = { ok: true } | { ok: false; error: string }
@@ -186,6 +186,47 @@ export async function resendReminder(id: string): Promise<ActionResult> {
 
   revalidatePath('/')
   return { ok: true }
+}
+
+export async function sendReactivationSequence(
+  appointmentId: string,
+): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const ctx = await requireStaff()
+  if (!ctx) return { ok: false, error: 'Tu sesión no tiene permisos.' }
+  if (!UUID_RE.test(appointmentId)) return { ok: false, error: 'Datos inválidos.' }
+
+  const { data: patient } = await ctx.supabase
+    .from('abandonment_risk')
+    .select('appointment_id, patient_name, treatment, days_inactive, last_reactivation_at')
+    .eq('appointment_id', appointmentId)
+    .maybeSingle()
+  if (!patient) return { ok: false, error: 'Este paciente ya no está en riesgo de abandono.' }
+
+  if (
+    patient.last_reactivation_at &&
+    Date.now() - new Date(patient.last_reactivation_at).getTime() < REACTIVATION_COOLDOWN_HOURS * 3_600_000
+  ) {
+    return { ok: false, error: 'Ya se envió una secuencia en las últimas 24 horas.' }
+  }
+
+  const message = buildReactivationMessage(patient.patient_name, patient.treatment, patient.days_inactive)
+
+  // Simulated delivery: logged as sent until a WhatsApp provider is connected.
+  const { error } = await ctx.supabase.from('whatsapp_messages').insert({
+    appointment_id: appointmentId,
+    direction: 'outbound',
+    kind: 'reactivation',
+    body: message,
+    delivery_status: 'sent',
+    sent_by: ctx.userId,
+  })
+  if (error) {
+    const result = dbError(error)
+    return { ok: false, error: result.ok ? 'Error inesperado.' : result.error }
+  }
+
+  revalidatePath('/')
+  return { ok: true, message }
 }
 
 export async function signOut() {

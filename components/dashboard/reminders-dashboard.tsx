@@ -1,11 +1,19 @@
 'use client'
 
 import { useMemo, useState, useTransition } from 'react'
-import { AlertCircle, CalendarDays, CalendarCheck, CalendarPlus } from 'lucide-react'
+import { AlertCircle, CalendarDays, CalendarCheck, CalendarPlus, HeartPulse } from 'lucide-react'
 import { closeAppointment, createAppointment, rescheduleAppointment, resendReminder } from '@/app/actions'
 import { Button } from '@/components/ui/button'
-import { CLINIC_TIME_ZONE, dayKeyToDate, type Appointment, type Treatment } from '@/lib/appointments'
+import {
+  CLINIC_TIME_ZONE,
+  REACTIVATION_HIGH_RISK_DAYS,
+  dayKeyToDate,
+  type Appointment,
+  type RiskPatient,
+  type Treatment,
+} from '@/lib/appointments'
 import { cn } from '@/lib/utils'
+import { AbandonmentRisk } from './abandonment-risk'
 import { AppointmentDialog, type AppointmentFormValues, type DialogState } from './appointment-dialog'
 import { AppointmentRow } from './appointment-row'
 import { ConfirmActionDialog, type ConfirmActionState } from './confirm-action-dialog'
@@ -21,10 +29,12 @@ export function RemindersDashboard({
   appointments,
   treatments,
   dayKeys,
+  riskPatients,
 }: {
   appointments: Appointment[]
   treatments: Treatment[]
   dayKeys: string[]
+  riskPatients: RiskPatient[]
 }) {
   const [filter, setFilter] = useState<StatusFilter>('all')
   const days = useMemo(() => dayKeys.map((key) => ({ key, date: dayKeyToDate(key) })), [dayKeys])
@@ -91,8 +101,68 @@ export function RemindersDashboard({
     })
   }
 
+  const [view, setView] = useState<'agenda' | 'risk'>('agenda')
+  const highRiskCount = riskPatients.filter((p) => p.daysInactive > REACTIVATION_HIGH_RISK_DAYS).length
+
+  const viewTabs = [
+    { id: 'agenda' as const, label: 'Recordatorios', icon: CalendarDays, count: null },
+    { id: 'risk' as const, label: 'Riesgo de abandono', icon: HeartPulse, count: riskPatients.length },
+  ]
+
   return (
     <div className="flex flex-col gap-6">
+      <div role="tablist" aria-label="Vista del panel" className="flex gap-1 self-start rounded-xl border bg-card p-1">
+        {viewTabs.map(({ id, label, icon: Icon, count }) => {
+          const active = view === id
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setView(id)}
+              className={cn(
+                'flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+                active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <Icon className="size-4" aria-hidden="true" />
+              {label}
+              {count !== null && count > 0 && (
+                <span
+                  className={cn(
+                    'rounded-full px-1.5 text-xs tabular-nums',
+                    active
+                      ? 'bg-primary-foreground/20'
+                      : highRiskCount > 0
+                        ? 'bg-danger-soft text-danger'
+                        : 'bg-warning-soft text-warning',
+                  )}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      {view === 'risk' ? (
+        <AbandonmentRisk
+          patients={riskPatients}
+          onSchedule={(p) =>
+            setDialog({
+              mode: 'create',
+              prefill: {
+                patientName: p.patientName,
+                phone: p.phone,
+                treatmentId: treatments.find((t) => t.name === p.treatment)?.id,
+              },
+            })
+          }
+        />
+      ) : (
+      <>
       <StatusSummary counts={counts} filter={filter} onFilterChange={setFilter} />
 
       <section aria-labelledby="agenda-title" className="flex flex-col gap-4">
@@ -194,6 +264,8 @@ export function RemindersDashboard({
           </div>
         )}
       </section>
+      </>
+      )}
 
       <AppointmentDialog
         state={dialog}
