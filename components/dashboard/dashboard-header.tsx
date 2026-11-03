@@ -1,6 +1,14 @@
-import { CalendarSync } from 'lucide-react'
+import { CalendarControls } from './calendar-controls'
 
-export function DashboardHeader() {
+export function DashboardHeader({
+  userName,
+  calendarConnected,
+  showCalendar,
+}: {
+  userName: string
+  calendarConnected: boolean
+  showCalendar: boolean
+}) {
   return (
     <header className="border-b bg-card">
       <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
@@ -13,13 +21,9 @@ export function DashboardHeader() {
             <h1 className="text-xl font-semibold text-balance">Recordatorios y confirmaciones</h1>
           </div>
         </div>
-        <div className="flex items-center gap-2 self-start rounded-full bg-success-soft px-3 py-1.5 text-sm font-medium text-success sm:self-auto">
-          <span className="relative flex size-2">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-60" />
-            <span className="relative inline-flex size-2 rounded-full bg-success" />
-          </span>
-          <CalendarSync className="size-4" aria-hidden="true" />
-          Sincronizado con Google Calendar
+        <div className="flex flex-wrap items-start gap-3">
+          {showCalendar && <CalendarControls connected={calendarConnected} />}
+          {userName && <span className="hidden py-1.5 text-sm text-muted-foreground md:inline">{userName}</span>}
         </div>
       </div>
     </header>

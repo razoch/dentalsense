@@ -1,10 +1,19 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { CalendarDays, CalendarCheck, CalendarPlus } from 'lucide-react'
+import { useMemo, useState, useTransition } from 'react'
+import { AlertCircle, CalendarDays, CalendarCheck, CalendarPlus, HeartPulse } from 'lucide-react'
+import { closeAppointment, createAppointment, resendReminder, updateAppointment } from '@/app/actions'
 import { Button } from '@/components/ui/button'
-import { CLINIC_TIME_ZONE, type Appointment } from '@/lib/appointments'
+import {
+  CLINIC_TIME_ZONE,
+  REACTIVATION_HIGH_RISK_DAYS,
+  dayKeyToDate,
+  type Appointment,
+  type RiskPatient,
+  type Treatment,
+} from '@/lib/appointments'
 import { cn } from '@/lib/utils'
+import { AbandonmentRisk } from './abandonment-risk'
 import { AppointmentDialog, type AppointmentFormValues, type DialogState } from './appointment-dialog'
 import { AppointmentRow } from './appointment-row'
 import { ConfirmActionDialog, type ConfirmActionState } from './confirm-action-dialog'
@@ -16,23 +25,23 @@ const weekdayFormatter = new Intl.DateTimeFormat('es-MX', { timeZone, weekday: '
 const dayNumberFormatter = new Intl.DateTimeFormat('es-MX', { timeZone, day: 'numeric' })
 const longDateFormatter = new Intl.DateTimeFormat('es-MX', { timeZone, weekday: 'long', day: 'numeric', month: 'long' })
 
-type Day = { key: string; date: Date }
-
-export function RemindersDashboard({ initialAppointments }: { initialAppointments: Appointment[] }) {
-  const [appointments, setAppointments] = useState(initialAppointments)
+export function RemindersDashboard({
+  appointments,
+  treatments,
+  dayKeys,
+  riskPatients,
+}: {
+  appointments: Appointment[]
+  treatments: Treatment[]
+  dayKeys: string[]
+  riskPatients: RiskPatient[]
+}) {
   const [filter, setFilter] = useState<StatusFilter>('all')
-
-  const days = useMemo<Day[]>(() => {
-    const map = new Map<string, Date>()
-    for (const a of initialAppointments) {
-      const date = new Date(a.start)
-      const key = dayKeyFormatter.format(date)
-      if (!map.has(key)) map.set(key, date)
-    }
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(0, 5).map(([key, date]) => ({ key, date }))
-  }, [initialAppointments])
-
-  const [selectedDay, setSelectedDay] = useState(days[0]?.key ?? '')
+  const days = useMemo(() => dayKeys.map((key) => ({ key, date: dayKeyToDate(key) })), [dayKeys])
+  const [selectedDay, setSelectedDay] = useState(dayKeys[0] ?? '')
+  const [rowError, setRowError] = useState<string | null>(null)
+  const [resendingId, setResendingId] = useState<string | null>(null)
+  const [, startResend] = useTransition()
 
   const counts = useMemo(
     () => ({
@@ -52,48 +61,109 @@ export function RemindersDashboard({ initialAppointments }: { initialAppointment
 
   const [dialog, setDialog] = useState<DialogState>(null)
 
-  function handleDialogSubmit(values: AppointmentFormValues) {
-    if (dialog?.mode === 'reschedule') {
-      const id = dialog.appointment.id
-      setAppointments((prev) =>
-        prev.map((a) =>
-          a.id === id
-            ? { ...a, treatment: values.treatment, start: values.start, status: 'pending', lastMessageAt: undefined }
-            : a,
-        ),
-      )
-    } else {
-      setAppointments((prev) => [
-        ...prev,
-        { id: `evt-${crypto.randomUUID()}`, ...values, status: 'pending' },
-      ])
-    }
-    setSelectedDay(dayKeyFormatter.format(new Date(values.start)))
+  async function handleDialogSubmit(values: AppointmentFormValues) {
+    const result =
+      dialog?.mode === 'edit'
+        ? await updateAppointment({ id: dialog.appointment.id, ...values })
+        : await createAppointment(values)
+    if (!result.ok) return result.error
+    const savedDay = dayKeyFormatter.format(new Date(values.start))
+    if (days.some((d) => d.key === savedDay)) setSelectedDay(savedDay)
     setFilter('all')
     setDialog(null)
+    return null
   }
 
   const [confirmAction, setConfirmAction] = useState<ConfirmActionState>(null)
+  const [confirmError, setConfirmError] = useState<string | null>(null)
+  const [isClosing, startClosing] = useTransition()
 
   function handleConfirmAction() {
     if (!confirmAction) return
     const { id } = confirmAction.appointment
     const status = confirmAction.action === 'complete' ? 'completed' : 'cancelled'
-    setAppointments((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a)))
-    setConfirmAction(null)
+    startClosing(async () => {
+      const result = await closeAppointment(id, status)
+      if (!result.ok) {
+        setConfirmError(result.error)
+        return
+      }
+      setConfirmAction(null)
+    })
   }
 
   function handleResend(id: string) {
-    setAppointments((prev) => prev.map((a) => (a.id === id ? { ...a, status: 'sending' } : a)))
-    setTimeout(() => {
-      setAppointments((prev) =>
-        prev.map((a) => (a.id === id ? { ...a, status: 'sent', lastMessageAt: new Date().toISOString() } : a)),
-      )
-    }, 1800)
+    setRowError(null)
+    setResendingId(id)
+    startResend(async () => {
+      const result = await resendReminder(id)
+      if (!result.ok) setRowError(result.error)
+      setResendingId(null)
+    })
   }
+
+  const [view, setView] = useState<'agenda' | 'risk'>('agenda')
+  const highRiskCount = riskPatients.filter((p) => p.daysInactive > REACTIVATION_HIGH_RISK_DAYS).length
+
+  const viewTabs = [
+    { id: 'agenda' as const, label: 'Recordatorios', icon: CalendarDays, count: null },
+    { id: 'risk' as const, label: 'Riesgo de abandono', icon: HeartPulse, count: riskPatients.length },
+  ]
 
   return (
     <div className="flex flex-col gap-6">
+      <div role="tablist" aria-label="Vista del panel" className="flex gap-1 self-start rounded-xl border bg-card p-1">
+        {viewTabs.map(({ id, label, icon: Icon, count }) => {
+          const active = view === id
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setView(id)}
+              className={cn(
+                'flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+                active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <Icon className="size-4" aria-hidden="true" />
+              {label}
+              {count !== null && count > 0 && (
+                <span
+                  className={cn(
+                    'rounded-full px-1.5 text-xs tabular-nums',
+                    active
+                      ? 'bg-primary-foreground/20'
+                      : highRiskCount > 0
+                        ? 'bg-danger-soft text-danger'
+                        : 'bg-warning-soft text-warning',
+                  )}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      {view === 'risk' ? (
+        <AbandonmentRisk
+          patients={riskPatients}
+          onSchedule={(p) =>
+            setDialog({
+              mode: 'create',
+              prefill: {
+                patientName: p.patientName,
+                phone: p.phone,
+                treatmentId: treatments.find((t) => t.name === p.treatment)?.id,
+              },
+            })
+          }
+        />
+      ) : (
+      <>
       <StatusSummary counts={counts} filter={filter} onFilterChange={setFilter} />
 
       <section aria-labelledby="agenda-title" className="flex flex-col gap-4">
@@ -157,31 +227,51 @@ export function RemindersDashboard({ initialAppointments }: { initialAppointment
           })}
         </div>
 
+        {rowError && (
+          <p role="alert" className="flex items-center gap-2 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
+            <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
+            {rowError}
+          </p>
+        )}
+
         {dayAppointments.length > 0 ? (
           <ul className="flex flex-col gap-3" role="tabpanel">
             {dayAppointments.map((appointment) => (
               <AppointmentRow
                 key={appointment.id}
-                appointment={appointment}
+                appointment={resendingId === appointment.id ? { ...appointment, status: 'sending' } : appointment}
                 onResend={handleResend}
-                onReschedule={(a) => setDialog({ mode: 'reschedule', appointment: a })}
-                onComplete={(a) => setConfirmAction({ action: 'complete', appointment: a })}
-                onCancel={(a) => setConfirmAction({ action: 'cancel', appointment: a })}
+                onReschedule={(a) => setDialog({ mode: 'edit', appointment: a })}
+                onComplete={(a) => {
+                  setConfirmError(null)
+                  setConfirmAction({ action: 'complete', appointment: a })
+                }}
+                onCancel={(a) => {
+                  setConfirmError(null)
+                  setConfirmAction({ action: 'cancel', appointment: a })
+                }}
               />
             ))}
           </ul>
         ) : (
           <div role="tabpanel" className="flex flex-col items-center gap-2 rounded-xl border border-dashed bg-card py-12 text-center">
             <CalendarCheck className="size-8 text-muted-foreground" aria-hidden="true" />
-            <p className="font-medium">No hay citas con este estado para este día</p>
-            <p className="text-sm text-muted-foreground">Prueba con otro día o quita el filtro.</p>
+            <p className="font-medium">
+              {appointments.length === 0 ? 'Aún no hay citas registradas' : 'No hay citas con este estado para este día'}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              {appointments.length === 0 ? 'Agenda la primera con el botón “Nueva cita”.' : 'Prueba con otro día o quita el filtro.'}
+            </p>
           </div>
         )}
       </section>
+      </>
+      )}
 
       <AppointmentDialog
         state={dialog}
         days={days}
+        treatments={treatments}
         appointments={appointments}
         onOpenChange={(open) => !open && setDialog(null)}
         onSubmit={handleDialogSubmit}
@@ -189,7 +279,9 @@ export function RemindersDashboard({ initialAppointments }: { initialAppointment
 
       <ConfirmActionDialog
         state={confirmAction}
-        onOpenChange={(open) => !open && setConfirmAction(null)}
+        isPending={isClosing}
+        error={confirmError}
+        onOpenChange={(open) => !open && !isClosing && setConfirmAction(null)}
         onConfirm={handleConfirmAction}
       />
     </div>

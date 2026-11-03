@@ -4,57 +4,57 @@ export type Appointment = {
   id: string
   patientName: string
   phone: string
+  treatmentId: string
   treatment: string
   start: string
   status: ReminderStatus
   lastMessageAt?: string
 }
 
-type CalendarEventSeed = {
-  dayOffset: number
-  time: string
-  summary: string
-  description: string
+export type Treatment = { id: string; name: string; durationMinutes: number }
+
+export type RiskPatient = {
+  appointmentId: string
+  patientId: string
+  patientName: string
   phone: string
-  status: ReminderStatus
+  treatment: string
+  category: 'multisesion_endodoncia' | 'multisesion_ortodoncia'
+  lastSessionAt: string
+  daysInactive: number
+  lastReactivationAt: string | null
+  reactivationCount: number
 }
 
-// Mirrors the shape of Google Calendar events: "summary" holds the patient, "description" the treatment.
-const seeds: CalendarEventSeed[] = [
-  { dayOffset: 0, time: '09:00', summary: 'María Fernanda López', description: 'Limpieza dental', phone: '+52 55 1234 5678', status: 'confirmed' },
-  { dayOffset: 0, time: '10:30', summary: 'Jorge Ramírez', description: 'Resina en molar', phone: '+52 55 2345 6789', status: 'sending' },
-  { dayOffset: 0, time: '12:00', summary: 'Ana Sofía Torres', description: 'Revisión de ortodoncia', phone: '+52 55 3456 7890', status: 'sent' },
-  { dayOffset: 0, time: '16:00', summary: 'Ricardo Méndez', description: 'Extracción de muela del juicio', phone: '+52 55 4567 8901', status: 'cancelled' },
-  { dayOffset: 1, time: '09:30', summary: 'Lucía Herrera', description: 'Blanqueamiento', phone: '+52 55 5678 9012', status: 'sent' },
-  { dayOffset: 1, time: '11:00', summary: 'Carlos Gutiérrez', description: 'Endodoncia (2ª sesión)', phone: '+52 55 6789 0123', status: 'confirmed' },
-  { dayOffset: 1, time: '13:00', summary: 'Valeria Castillo', description: 'Valoración inicial', phone: '+52 55 7890 1234', status: 'pending' },
-  { dayOffset: 2, time: '10:00', summary: 'Diego Morales', description: 'Limpieza dental', phone: '+52 55 8901 2345', status: 'pending' },
-  { dayOffset: 2, time: '12:30', summary: 'Patricia Núñez', description: 'Colocación de corona', phone: '+52 55 9012 3456', status: 'sent' },
-  { dayOffset: 2, time: '17:00', summary: 'Fernando Ruiz', description: 'Ajuste de brackets', phone: '+52 55 0123 4567', status: 'confirmed' },
-  { dayOffset: 3, time: '09:00', summary: 'Gabriela Ortiz', description: 'Resina estética', phone: '+52 55 1122 3344', status: 'pending' },
-  { dayOffset: 3, time: '15:30', summary: 'Andrés Vega', description: 'Revisión general', phone: '+52 55 2233 4455', status: 'cancelled' },
-  { dayOffset: 4, time: '10:00', summary: 'Sofía Delgado', description: 'Limpieza dental', phone: '+52 55 3344 5566', status: 'pending' },
-  { dayOffset: 4, time: '11:30', summary: 'Miguel Ángel Rosas', description: 'Implante (control)', phone: '+52 55 4455 6677', status: 'pending' },
-]
+export const REACTIVATION_HIGH_RISK_DAYS = 30
+export const REACTIVATION_COOLDOWN_HOURS = 24
+
+export function buildReactivationMessage(patientName: string, treatment: string, daysInactive: number) {
+  const firstName = patientName.trim().split(/\s+/)[0]
+  return `Hola ${firstName}, te saluda el consultorio de la Dra. Laura. Notamos que han pasado ${daysInactive} días desde tu última sesión de ${treatment.toLowerCase()}. Aunque ya no sientas molestias, es importante concluir el tratamiento para evitar complicaciones. ¿Te gustaría que te agendemos tu siguiente cita esta semana? Responde SÍ y te compartimos horarios.`
+}
+
+export type DashboardAppointmentRow = {
+  id: string
+  patient_name: string
+  phone: string
+  treatment_id: string
+  treatment: string
+  starts_at: string
+  status: ReminderStatus
+  last_message_at: string | null
+}
 
 export const CLINIC_TIME_ZONE = 'America/Mexico_City'
 const CLINIC_UTC_OFFSET = '-06:00'
-
-export const TREATMENTS = [
-  'Limpieza dental',
-  'Valoración inicial',
-  'Revisión general',
-  'Resina estética',
-  'Endodoncia',
-  'Extracción',
-  'Blanqueamiento',
-  'Ajuste de brackets',
-  'Colocación de corona',
-  'Implante (control)',
-]
+export const UPCOMING_DAYS = 5
 
 export function toClinicISO(dayKey: string, time: string) {
   return new Date(`${dayKey}T${time}:00${CLINIC_UTC_OFFSET}`).toISOString()
+}
+
+export function dayKeyToDate(dayKey: string) {
+  return new Date(`${dayKey}T12:00:00${CLINIC_UTC_OFFSET}`)
 }
 
 const dayKeyFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: CLINIC_TIME_ZONE })
@@ -70,25 +70,32 @@ export function toClinicParts(iso: string) {
   return { dayKey: dayKeyFormatter.format(date), time: timeKeyFormatter.format(date) }
 }
 
-export function getUpcomingAppointments(now = new Date()): Appointment[] {
-  const todayInClinic = new Intl.DateTimeFormat('en-CA', { timeZone: CLINIC_TIME_ZONE }).format(now)
-  const [y, m, d] = todayInClinic.split('-').map(Number)
+export function getUpcomingDayKeys(now = new Date(), count = UPCOMING_DAYS) {
+  const [y, m, d] = dayKeyFormatter.format(now).split('-').map(Number)
+  return Array.from({ length: count }, (_, i) => new Date(Date.UTC(y, m - 1, d + i)).toISOString().slice(0, 10))
+}
 
-  return seeds.map((seed, index) => {
-    const day = new Date(Date.UTC(y, m - 1, d + seed.dayOffset)).toISOString().slice(0, 10)
-    const start = new Date(`${day}T${seed.time}:00${CLINIC_UTC_OFFSET}`)
+export function rowToAppointment(row: DashboardAppointmentRow): Appointment {
+  return {
+    id: row.id,
+    patientName: row.patient_name,
+    phone: row.phone,
+    treatmentId: row.treatment_id,
+    treatment: row.treatment,
+    start: new Date(row.starts_at).toISOString(),
+    status: row.status,
+    lastMessageAt: row.last_message_at ? new Date(row.last_message_at).toISOString() : undefined,
+  }
+}
 
-    const lastMessageAt =
-      seed.status === 'pending' ? undefined : new Date(now.getTime() - (index + 1) * 17 * 60_000).toISOString()
+export function normalizePhone(raw: string) {
+  const digits = raw.replace(/[^\d+]/g, '')
+  if (digits.startsWith('+')) return digits
+  if (digits.length === 10) return `+52${digits}`
+  return `+${digits}`
+}
 
-    return {
-      id: `evt-${index + 1}`,
-      patientName: seed.summary,
-      phone: seed.phone,
-      treatment: seed.description,
-      start: start.toISOString(),
-      status: seed.status,
-      lastMessageAt,
-    }
-  })
+export function formatPhone(e164: string) {
+  const match = e164.match(/^\+52(\d{2})(\d{4})(\d{4})$/)
+  return match ? `+52 ${match[1]} ${match[2]} ${match[3]}` : e164
 }
