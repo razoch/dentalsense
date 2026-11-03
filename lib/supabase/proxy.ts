@@ -1,12 +1,16 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { isSupabaseConfigured, supabaseKey, supabaseUrl } from './env'
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
+  // Env vars can take a moment to be provisioned; let the page render its setup notice instead of crashing.
+  if (!isSupabaseConfigured) return supabaseResponse
+
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseKey,
     {
       cookieOptions: { secure: process.env.NODE_ENV === 'production' },
       cookies: {

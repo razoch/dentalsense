@@ -1,9 +1,24 @@
-import { ShieldAlert } from 'lucide-react'
+import { DatabaseZap, ShieldAlert } from 'lucide-react'
+import { isSupabaseConfigured } from '@/lib/supabase/env'
 import { DashboardHeader } from '@/components/dashboard/dashboard-header'
 import { RemindersDashboard } from '@/components/dashboard/reminders-dashboard'
 import { getDashboardData } from '@/lib/data'
 
 export default async function Page() {
+  if (!isSupabaseConfigured) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center px-4">
+        <div className="flex max-w-md flex-col items-center gap-3 rounded-2xl border bg-card p-8 text-center">
+          <DatabaseZap className="size-8 text-primary" aria-hidden="true" />
+          <h1 className="text-lg font-semibold">Conectando con la base de datos</h1>
+          <p className="text-sm leading-relaxed text-muted-foreground text-pretty">
+            Las credenciales de Supabase aún se están configurando. Recarga la página en unos segundos.
+          </p>
+        </div>
+      </main>
+    )
+  }
+
   const { staff, user, dayKeys, appointments, treatments } = await getDashboardData()
 
   return (
