@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from 'react'
 import { AlertCircle, CalendarDays, CalendarCheck, CalendarPlus, HeartPulse } from 'lucide-react'
-import { closeAppointment, createAppointment, rescheduleAppointment, resendReminder } from '@/app/actions'
+import { closeAppointment, createAppointment, resendReminder, updateAppointment } from '@/app/actions'
 import { Button } from '@/components/ui/button'
 import {
   CLINIC_TIME_ZONE,
@@ -63,11 +63,12 @@ export function RemindersDashboard({
 
   async function handleDialogSubmit(values: AppointmentFormValues) {
     const result =
-      dialog?.mode === 'reschedule'
-        ? await rescheduleAppointment({ id: dialog.appointment.id, treatmentId: values.treatmentId, start: values.start })
+      dialog?.mode === 'edit'
+        ? await updateAppointment({ id: dialog.appointment.id, ...values })
         : await createAppointment(values)
     if (!result.ok) return result.error
-    setSelectedDay(dayKeyFormatter.format(new Date(values.start)))
+    const savedDay = dayKeyFormatter.format(new Date(values.start))
+    if (days.some((d) => d.key === savedDay)) setSelectedDay(savedDay)
     setFilter('all')
     setDialog(null)
     return null
@@ -240,7 +241,7 @@ export function RemindersDashboard({
                 key={appointment.id}
                 appointment={resendingId === appointment.id ? { ...appointment, status: 'sending' } : appointment}
                 onResend={handleResend}
-                onReschedule={(a) => setDialog({ mode: 'reschedule', appointment: a })}
+                onReschedule={(a) => setDialog({ mode: 'edit', appointment: a })}
                 onComplete={(a) => {
                   setConfirmError(null)
                   setConfirmAction({ action: 'complete', appointment: a })

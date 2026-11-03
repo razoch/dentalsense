@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, type FormEvent } from 'react'
-import { AlertCircle, CalendarClock, CalendarPlus } from 'lucide-react'
+import { AlertCircle, CalendarPlus, Info, PencilLine } from 'lucide-react'
+import type { EditableStatus } from '@/app/actions'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -14,18 +15,11 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  CLINIC_TIME_ZONE,
-  toClinicISO,
-  toClinicParts,
-  type Appointment,
-  type Treatment,
-} from '@/lib/appointments'
-import { cn } from '@/lib/utils'
+import { toClinicISO, toClinicParts, type Appointment, type Treatment } from '@/lib/appointments'
 
 export type DialogState =
   | { mode: 'create'; prefill?: { patientName: string; phone: string; treatmentId?: string } }
-  | { mode: 'reschedule'; appointment: Appointment }
+  | { mode: 'edit'; appointment: Appointment }
   | null
 
 export type AppointmentFormValues = {
@@ -33,16 +27,18 @@ export type AppointmentFormValues = {
   phone: string
   treatmentId: string
   start: string
+  status: EditableStatus
 }
 
 type SubmitHandler = (values: AppointmentFormValues) => Promise<string | null>
 
-const dayLabelFormatter = new Intl.DateTimeFormat('es-MX', {
-  timeZone: CLINIC_TIME_ZONE,
-  weekday: 'long',
-  day: 'numeric',
-  month: 'long',
-})
+const STATUS_OPTIONS: { value: EditableStatus; label: string }[] = [
+  { value: 'pending', label: 'Pendiente de recordatorio' },
+  { value: 'sent', label: 'Recordatorio enviado' },
+  { value: 'confirmed', label: 'Confirmada' },
+  { value: 'completed', label: 'Completada (paciente atendido)' },
+  { value: 'cancelled', label: 'Cancelada' },
+]
 
 const fieldClassName =
   'h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30'
@@ -63,7 +59,7 @@ export function AppointmentDialog({
   onSubmit: SubmitHandler
 }) {
   const formKey =
-    state?.mode === 'reschedule'
+    state?.mode === 'edit'
       ? state.appointment.id
       : state?.mode === 'create'
         ? `create-${state.prefill?.phone ?? ''}`
@@ -76,7 +72,7 @@ export function AppointmentDialog({
           <AppointmentForm
             key={formKey}
             state={state}
-            days={days}
+            todayKey={days[0]?.key ?? ''}
             treatments={treatments}
             appointments={appointments}
             onSubmit={onSubmit}
@@ -89,32 +85,41 @@ export function AppointmentDialog({
 
 function AppointmentForm({
   state,
-  days,
+  todayKey,
   treatments,
   appointments,
   onSubmit,
 }: {
   state: NonNullable<DialogState>
-  days: { key: string; date: Date }[]
+  todayKey: string
   treatments: Treatment[]
   appointments: Appointment[]
   onSubmit: SubmitHandler
 }) {
-  const isReschedule = state.mode === 'reschedule'
-  const current = isReschedule ? state.appointment : null
+  const isEdit = state.mode === 'edit'
+  const current = isEdit ? state.appointment : null
   const prefill = state.mode === 'create' ? state.prefill : undefined
-  const initial = current ? toClinicParts(current.start) : { dayKey: days[0]?.key ?? '', time: '09:00' }
+  const initial = current ? toClinicParts(current.start) : { dayKey: todayKey, time: '09:00' }
+  const initialStatus: EditableStatus = current
+    ? current.status === 'sending'
+      ? 'sent'
+      : current.status
+    : 'pending'
+
+  const [status, setStatus] = useState<EditableStatus>(initialStatus)
+  const [dayKey, setDayKey] = useState(initial.dayKey)
   const [error, setError] = useState<string | null>(null)
   const [isPending, setIsPending] = useState(false)
+
+  const isPastDate = dayKey !== '' && dayKey < todayKey
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const data = new FormData(event.currentTarget)
-    const patientName = current?.patientName ?? String(data.get('patientName')).trim()
-    const phone = current?.phone ?? String(data.get('phone')).trim()
+    const patientName = String(data.get('patientName') ?? '').trim()
+    const phone = String(data.get('phone') ?? '').trim()
     const treatmentId = String(data.get('treatmentId') ?? '')
-    const dayKey = String(data.get('day'))
-    const time = String(data.get('time'))
+    const time = String(data.get('time') ?? '')
 
     if (!patientName || !phone || !treatmentId || !dayKey || !time) {
       setError('Completa todos los campos.')
@@ -122,27 +127,22 @@ function AppointmentForm({
     }
 
     const start = toClinicISO(dayKey, time)
-    if (current && start === current.start && treatmentId === current.treatmentId && current.status !== 'cancelled') {
-      setError('Selecciona un horario distinto al actual.')
-      return
-    }
-
     const conflict = appointments.find(
       (a) => a.id !== current?.id && a.status !== 'cancelled' && a.status !== 'completed' && a.start === start,
     )
-    if (conflict) {
+    if (conflict && status !== 'cancelled') {
       setError(`Ese horario ya está ocupado por ${conflict.patientName}.`)
       return
     }
 
     setError(null)
     setIsPending(true)
-    const submitError = await onSubmit({ patientName, phone, treatmentId, start })
+    const submitError = await onSubmit({ patientName, phone, treatmentId, start, status: isEdit ? status : 'pending' })
     setIsPending(false)
     if (submitError) setError(submitError)
   }
 
-  const Icon = isReschedule ? CalendarClock : CalendarPlus
+  const Icon = isEdit ? PencilLine : CalendarPlus
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-5" noValidate>
@@ -152,55 +152,39 @@ function AppointmentForm({
             <Icon className="size-5" aria-hidden="true" />
           </span>
           <div className="flex flex-col gap-1">
-            <DialogTitle>{isReschedule ? 'Reagendar cita' : 'Agendar nueva cita'}</DialogTitle>
+            <DialogTitle>{isEdit ? 'Editar cita' : 'Agendar nueva cita'}</DialogTitle>
             <DialogDescription>
-              {isReschedule
-                ? 'Se actualizará en Google Calendar y se enviará un nuevo recordatorio.'
+              {isEdit
+                ? 'Los cambios solo afectan a esta cita.'
                 : 'La cita se creará en Google Calendar con recordatorio automático.'}
             </DialogDescription>
           </div>
         </div>
       </DialogHeader>
 
-      {current ? (
-        <div className="rounded-lg border bg-muted/40 p-3">
-          <p className="font-semibold">{current.patientName}</p>
-          <p className="text-xs text-muted-foreground">{current.phone}</p>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Horario actual:{' '}
-            <span className="font-medium text-foreground first-letter:uppercase">
-              {dayLabelFormatter.format(new Date(current.start))} · {initial.time} hrs
-            </span>
-          </p>
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="flex flex-col gap-1.5 sm:col-span-2">
-            <Label htmlFor="patientName">Nombre del paciente</Label>
-            <Input
-              id="patientName"
-              name="patientName"
-              required
-              autoComplete="off"
-              placeholder="Ej. Laura Pérez"
-              defaultValue={prefill?.patientName}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5 sm:col-span-2">
-            <Label htmlFor="phone">WhatsApp</Label>
-            <Input
-              id="phone"
-              name="phone"
-              type="tel"
-              required
-              placeholder="+52 55 1234 5678"
-              defaultValue={prefill?.phone}
-            />
-          </div>
-        </div>
-      )}
-
       <div className="grid gap-4 sm:grid-cols-2">
+        <div className="flex flex-col gap-1.5 sm:col-span-2">
+          <Label htmlFor="patientName">Nombre del paciente</Label>
+          <Input
+            id="patientName"
+            name="patientName"
+            required
+            autoComplete="off"
+            placeholder="Ej. Laura Pérez"
+            defaultValue={current?.patientName ?? prefill?.patientName}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5 sm:col-span-2">
+          <Label htmlFor="phone">WhatsApp</Label>
+          <Input
+            id="phone"
+            name="phone"
+            type="tel"
+            required
+            placeholder="+52 55 1234 5678"
+            defaultValue={current?.phone ?? prefill?.phone}
+          />
+        </div>
         <div className="flex flex-col gap-1.5 sm:col-span-2">
           <Label htmlFor="treatmentId">Tratamiento</Label>
           <select
@@ -221,20 +205,49 @@ function AppointmentForm({
           </select>
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="day">Día</Label>
-          <select id="day" name="day" defaultValue={initial.dayKey} className={cn(fieldClassName, 'capitalize')}>
-            {days.map((d) => (
-              <option key={d.key} value={d.key} className="bg-popover">
-                {dayLabelFormatter.format(d.date)}
-              </option>
-            ))}
-          </select>
+          <Label htmlFor="day">Fecha</Label>
+          <Input
+            id="day"
+            name="day"
+            type="date"
+            required
+            min={isEdit ? undefined : todayKey}
+            value={dayKey}
+            onChange={(e) => setDayKey(e.target.value)}
+          />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="time">Hora</Label>
           <Input id="time" name="time" type="time" min="08:00" max="20:00" step={900} required defaultValue={initial.time} />
         </div>
+        {isEdit && (
+          <div className="flex flex-col gap-1.5 sm:col-span-2">
+            <Label htmlFor="status">Estado</Label>
+            <select
+              id="status"
+              name="status"
+              value={status}
+              onChange={(e) => setStatus(e.target.value as EditableStatus)}
+              className={fieldClassName}
+            >
+              {STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value} className="bg-popover">
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
+
+      {isEdit && isPastDate && (
+        <p className="flex items-start gap-2 rounded-lg bg-muted px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+          <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          {status === 'completed'
+            ? 'Fecha pasada: si es endodoncia u ortodoncia y han pasado más de 15 días, el paciente aparecerá en Riesgo de abandono.'
+            : 'Fecha pasada: marca la cita como Completada para que cuente como última sesión del tratamiento.'}
+        </p>
+      )}
 
       {error && (
         <p role="alert" className="flex items-center gap-2 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
@@ -246,7 +259,7 @@ function AppointmentForm({
       <DialogFooter>
         <DialogClose render={<Button type="button" variant="outline" disabled={isPending} />}>Cancelar</DialogClose>
         <Button type="submit" disabled={isPending}>
-          {isPending ? 'Guardando…' : isReschedule ? 'Confirmar nuevo horario' : 'Agendar cita'}
+          {isPending ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Agendar cita'}
         </Button>
       </DialogFooter>
     </form>

@@ -54,6 +54,31 @@ async function getTreatmentDuration(supabase: ReturnType<typeof createAdminClien
   return data?.duration_minutes ?? null
 }
 
+// Patients are matched by phone + name so relatives sharing a WhatsApp number keep separate records
+// and booking never renames an existing patient.
+async function findOrCreatePatient(
+  supabase: ReturnType<typeof createAdminClient>,
+  fullName: string,
+  phone: string,
+): Promise<{ id: string } | { error: { code?: string; message: string } }> {
+  const { data: matches, error: lookupError } = await supabase
+    .from('patients')
+    .select('id, full_name')
+    .eq('phone', phone)
+  if (lookupError) return { error: lookupError }
+
+  const wanted = fullName.trim().toLowerCase()
+  const existing = matches?.find((p) => p.full_name.trim().toLowerCase() === wanted)
+  if (existing) return { id: existing.id }
+
+  const { data: created, error } = await supabase
+    .from('patients')
+    .insert({ full_name: fullName, phone })
+    .select('id')
+    .single()
+  return error ? { error } : { id: created.id }
+}
+
 export async function createAppointment(input: {
   patientName: string
   phone: string
@@ -75,12 +100,8 @@ export async function createAppointment(input: {
   const duration = await getTreatmentDuration(ctx.supabase, input.treatmentId)
   if (!duration) return { ok: false, error: 'El tratamiento seleccionado no está disponible.' }
 
-  const { data: patient, error: patientError } = await ctx.supabase
-    .from('patients')
-    .upsert({ full_name: patientName, phone }, { onConflict: 'phone' })
-    .select('id')
-    .single()
-  if (patientError) return dbError(patientError)
+  const patient = await findOrCreatePatient(ctx.supabase, patientName, phone)
+  if ('error' in patient) return dbError(patient.error)
 
   const { data: created, error } = await ctx.supabase
     .from('appointments')
@@ -100,39 +121,57 @@ export async function createAppointment(input: {
   return { ok: true }
 }
 
-export async function rescheduleAppointment(input: {
+const EDITABLE_STATUSES = ['pending', 'sent', 'confirmed', 'completed', 'cancelled'] as const
+export type EditableStatus = (typeof EDITABLE_STATUSES)[number]
+
+export async function updateAppointment(input: {
   id: string
+  patientName: string
+  phone: string
   treatmentId: string
   start: string
+  status: EditableStatus
 }): Promise<ActionResult> {
   const ctx = await requireStaff()
-  if (!ctx) return { ok: false, error: 'Tu sesión no tiene permisos para reagendar.' }
+  if (!ctx) return { ok: false, error: 'Tu sesión no tiene permisos para editar.' }
 
+  const patientName = String(input.patientName ?? '').trim()
+  const phone = normalizePhone(String(input.phone ?? ''))
   const start = parseStart(input.start)
+
   if (!UUID_RE.test(input.id) || !UUID_RE.test(input.treatmentId)) return { ok: false, error: 'Datos inválidos.' }
-  if (!start || start.getTime() < Date.now()) return { ok: false, error: 'Elige un horario futuro.' }
+  if (patientName.length < 2 || patientName.length > 120) return { ok: false, error: 'Escribe el nombre del paciente.' }
+  if (!PHONE_RE.test(phone)) return { ok: false, error: 'El WhatsApp debe tener 10 dígitos o formato +52…' }
+  if (!EDITABLE_STATUSES.includes(input.status)) return { ok: false, error: 'Estado inválido.' }
+  if (!start) return { ok: false, error: 'Elige una fecha y hora válidas.' }
 
   const duration = await getTreatmentDuration(ctx.supabase, input.treatmentId)
   if (!duration) return { ok: false, error: 'El tratamiento seleccionado no está disponible.' }
 
+  const patient = await findOrCreatePatient(ctx.supabase, patientName, phone)
+  if ('error' in patient) return dbError(patient.error)
+
+  const endsAt = new Date(start.getTime() + duration * 60_000).toISOString()
+  const status = input.status
+
   const { data, error } = await ctx.supabase
     .from('appointments')
     .update({
+      patient_id: patient.id,
       treatment_id: input.treatmentId,
       starts_at: start.toISOString(),
-      ends_at: new Date(start.getTime() + duration * 60_000).toISOString(),
-      status: 'pending',
-      last_message_at: null,
-      reminder_attempts: 0,
-      confirmed_at: null,
-      cancelled_at: null,
-      cancel_reason: null,
+      ends_at: endsAt,
+      status,
+      // Stamp completion at the session end so back-dated sessions feed the abandonment-risk view correctly.
+      completed_at: status === 'completed' ? endsAt : null,
+      confirmed_at: status === 'confirmed' ? new Date().toISOString() : null,
+      cancelled_at: status === 'cancelled' ? new Date().toISOString() : null,
+      ...(status === 'pending' ? { last_message_at: null, reminder_attempts: 0 } : {}),
     })
     .eq('id', input.id)
-    .neq('status', 'completed')
     .select('id')
   if (error) return dbError(error)
-  if (!data.length) return { ok: false, error: 'La cita ya no se puede reagendar.' }
+  if (!data.length) return { ok: false, error: 'No se encontró la cita.' }
 
   await pushToCalendar(ctx, input.id, 'upsert')
   revalidatePath('/')

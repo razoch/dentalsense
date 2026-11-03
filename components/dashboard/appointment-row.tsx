@@ -1,4 +1,4 @@
-import { CalendarClock, CircleCheckBig, RotateCw, Stethoscope, XCircle } from 'lucide-react'
+import { CircleCheckBig, PencilLine, RotateCw, Stethoscope, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { CLINIC_TIME_ZONE, type Appointment } from '@/lib/appointments'
 import { cn } from '@/lib/utils'
@@ -90,12 +90,12 @@ export function AppointmentRow({
         <Button
           variant={status === 'cancelled' ? 'default' : 'outline'}
           className="w-full"
-          disabled={isSending || isCompleted}
+          disabled={isSending}
           onClick={() => onReschedule(appointment)}
-          aria-label={`Reagendar cita de ${patientName}`}
+          aria-label={`Editar cita de ${patientName}`}
         >
-          <CalendarClock className="size-4" aria-hidden="true" />
-          Reagendar
+          <PencilLine className="size-4" aria-hidden="true" />
+          Editar
         </Button>
         <div className="grid grid-cols-2 gap-2">
           <Button
