@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import {
   REACTIVATION_COOLDOWN_HOURS,
   buildReactivationMessage,
+  normalizePhone,
 } from '@/lib/appointments'
 import { isCalendarConnected, setCalendarConnected, wait } from '@/lib/google-calendar'
 import { createAdminClient, getDemoStaff } from '@/lib/supabase/admin'
@@ -282,7 +283,10 @@ export async function syncGoogleCalendar(): Promise<CalendarSyncResult> {
     .not('status', 'in', '(completed,cancelled)')
     .gte('starts_at', new Date().toISOString())
     .select('id')
-  if (error) return dbError(error)
+  if (error) {
+    console.error('[actions] Calendar sync error:', error.message)
+    return { ok: false, error: 'No se pudo sincronizar el calendario.' }
+  }
 
   revalidatePath('/')
   return { ok: true, synced: data.length }
