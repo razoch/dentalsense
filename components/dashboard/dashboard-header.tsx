@@ -1,6 +1,3 @@
-import { LogOut } from 'lucide-react'
-import { signOut } from '@/app/actions'
-import { Button } from '@/components/ui/button'
 import { CalendarControls } from './calendar-controls'
 
 export function DashboardHeader({
@@ -26,13 +23,7 @@ export function DashboardHeader({
         </div>
         <div className="flex flex-wrap items-start gap-3">
           {showCalendar && <CalendarControls connected={calendarConnected} />}
-          <form action={signOut} className="flex items-center gap-2">
-            <span className="hidden text-sm text-muted-foreground md:inline">{userName}</span>
-            <Button type="submit" variant="outline" size="sm">
-              <LogOut className="size-4" aria-hidden="true" />
-              Salir
-            </Button>
-          </form>
+          {userName && <span className="hidden py-1.5 text-sm text-muted-foreground md:inline">{userName}</span>}
         </div>
       </div>
     </header>

@@ -31,14 +31,14 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  if (!user && !request.nextUrl.pathname.startsWith('/auth')) {
+  // Login is bypassed for the demo: send visitors straight to the dashboard.
+  if (request.nextUrl.pathname.startsWith('/auth')) {
     const url = request.nextUrl.clone()
-    url.pathname = '/auth/login'
+    url.pathname = '/'
     url.search = ''
-    const redirect = NextResponse.redirect(url)
-    supabaseResponse.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie))
-    return redirect
+    return NextResponse.redirect(url)
   }
 
+  void user
   return supabaseResponse
 }

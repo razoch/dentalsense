@@ -1,5 +1,4 @@
 import 'server-only'
-import { redirect } from 'next/navigation'
 import {
   getUpcomingDayKeys,
   rowToAppointment,
@@ -9,21 +8,11 @@ import {
   type Treatment,
 } from '@/lib/appointments'
 import { isCalendarConnected } from '@/lib/google-calendar'
-import { createClient } from '@/lib/supabase/server'
+import { getDemoStaff } from '@/lib/supabase/admin'
 
 export async function getCurrentStaff() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) redirect('/auth/login')
-
-  const { data: staff } = await supabase
-    .from('staff')
-    .select('id, full_name, role, is_active')
-    .eq('id', user.id)
-    .maybeSingle()
-
+  const { supabase, staff } = await getDemoStaff()
+  const user = { id: staff?.id ?? '', email: null as string | null }
   return { supabase, user, staff }
 }
 
@@ -62,7 +51,7 @@ export async function getDashboardData() {
         'appointment_id, patient_id, patient_name, phone, treatment, followup_category, last_session_at, days_inactive, last_reactivation_at, reactivation_count',
       )
       .order('days_inactive', { ascending: false }),
-    isCalendarConnected(user.id),
+    isCalendarConnected(),
   ])
 
   if (appointmentsResult.error) throw new Error(appointmentsResult.error.message)
